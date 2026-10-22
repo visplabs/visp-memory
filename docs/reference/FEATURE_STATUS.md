@@ -38,4 +38,4 @@ runs a model or independently certifies that work is complete.
 
 These statuses describe support, not measured coding benefit. See
 [benchmarks](BENCHMARK.md) for the evidence and [installation](../guides/INSTALLATION.md)
-for deployment choices. Report problems through [GitHub Issues](https://github.com/djkeshawa/visp-memory/issues).
+for deployment choices. Report problems through [GitHub Issues](https://github.com/visplabs/visp-memory/issues).

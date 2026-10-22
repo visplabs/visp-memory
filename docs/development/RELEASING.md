@@ -103,7 +103,7 @@ Verify these settings on the existing PyPI project and GitHub environment:
 | Field | Value |
 |---|---|
 | PyPI project | `visp-memory` |
-| GitHub owner | `djkeshawa` |
+| GitHub owner | `visplabs` |
 | Repository | `visp-memory` |
 | Workflow | `build-release.yml` |
 | Environment | `pypi` |

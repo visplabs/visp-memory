@@ -50,7 +50,7 @@ time.
 ## Development setup
 
 ```bash
-git clone https://github.com/djkeshawa/visp-memory.git
+git clone https://github.com/visplabs/visp-memory.git
 cd visp-memory
 python3 -m venv .venv
 source .venv/bin/activate

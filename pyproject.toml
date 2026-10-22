@@ -3,7 +3,7 @@
 # The import package is visp_memory; the console scripts are `visp-memory` (CLI) and
 # `visp-memory-mcp` (MCP server).
 name = "visp-memory"
-version = "0.9.0"
+version = "0.10.0"
 description = "Curated, auditable memory for coding agents - mines your git history, injects sparingly, quarantines untrusted memory"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -81,10 +81,10 @@ dev = [
 all = ["visp-memory[openai,anthropic,ollama,local-embeddings,api,mcp,capture,analysis,arcadedb,neo4j]"]
 
 [project.urls]
-Homepage = "https://github.com/djkeshawa/visp-memory"
-Repository = "https://github.com/djkeshawa/visp-memory"
-Issues = "https://github.com/djkeshawa/visp-memory/issues"
-Changelog = "https://github.com/djkeshawa/visp-memory/releases"
+Homepage = "https://github.com/visplabs/visp-memory"
+Repository = "https://github.com/visplabs/visp-memory"
+Issues = "https://github.com/visplabs/visp-memory/issues"
+Changelog = "https://github.com/visplabs/visp-memory/releases"
 
 [project.scripts]
 visp-memory = "visp_memory.interfaces.cli:app"
