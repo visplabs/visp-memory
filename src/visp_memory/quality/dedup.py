@@ -83,6 +83,18 @@ class DedupReport:
         return cls(determined=False, reason=reason)
 
 
+def _comparison_key(row: dict[str, Any]):
+    """Repository and scope a row is compared within; None if it cannot be grouped.
+
+    A row whose environment or task_type metadata is malformed has no scope to
+    compare, so it is left out rather than failing the whole layer.
+    """
+    try:
+        return (row.get("repo_id"), scope_signature(row.get("metadata")))
+    except ValueError:
+        return None
+
+
 class Deduplicator:
     """
     Identifies and handles duplicate memories.
@@ -274,9 +286,7 @@ class Deduplicator:
         peek = getattr(self.storage, "peek_memory", None)
         rows = [peek(mid) if callable(peek) else self.storage.get_memory(mid) for mid in ids]
         keys = [
-            (row.get("repo_id"), scope_signature(row.get("metadata")))
-            if row and row.get("status", "active") == "active"
-            else None
+            _comparison_key(row) if row and row.get("status", "active") == "active" else None
             for row in rows
         ]
 
@@ -445,7 +455,17 @@ class Deduplicator:
             return 0
 
         retargeted = 0
-        seen: set[tuple[str, str, str]] = set()
+        # Edges the survivor already has are left alone: re-adding one updates it in
+        # place, so a duplicate's weaker strength and evidence would replace them.
+        seen: set[tuple[str, str, str]] = {
+            (
+                relationship.get("source_id"),
+                relationship.get("target_id"),
+                relationship.get("relationship") or "related",
+            )
+            for relationship in relationships
+            if primary_id in (relationship.get("source_id"), relationship.get("target_id"))
+        }
         for relationship in relationships:
             source_id = relationship.get("source_id")
             target_id = relationship.get("target_id")

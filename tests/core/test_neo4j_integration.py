@@ -1,12 +1,21 @@
 """Real-server contracts. CI supplies a dedicated Neo4j database, never a user's store."""
 
+import base64
+import json
 import os
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from datetime import timedelta
 
 import pytest
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
+from visp_memory.core.authority import (
+    PROHIBITION_AUTHORITY_KEYS_ENV,
+    build_prohibition_claim,
+    sign_prohibition_attestation,
+)
 from visp_memory.core.clock import utc_now
 from visp_memory.core.dreaming import Dreaming
 from visp_memory.core.dreaming.persistence import transaction
@@ -578,3 +587,139 @@ def test_turn_keys_find_a_passing_fact_and_follow_the_memory_lifecycle():
         with storage.driver.session() as session:
             session.run("MATCH (n) WHERE n.repo_id = $repo DETACH DELETE n", repo=repo).consume()
         storage.close()
+
+
+# Contracts changed in 0.10.0. Each fails against the query it replaced, so the change
+# is proven on a real server rather than only against the unit-test fakes.
+
+
+def _authority_key(monkeypatch):
+    key = Ed25519PrivateKey.generate()
+    private = key.private_bytes(
+        serialization.Encoding.Raw, serialization.PrivateFormat.Raw, serialization.NoEncryption()
+    )
+    public = key.public_key().public_bytes(
+        serialization.Encoding.Raw, serialization.PublicFormat.Raw
+    )
+    monkeypatch.setenv(
+        PROHIBITION_AUTHORITY_KEYS_ENV,
+        json.dumps({"integration": base64.b64encode(public).decode("ascii")}),
+    )
+    return base64.b64encode(private).decode("ascii")
+
+
+def test_related_memories_skip_superseded_neighbours_and_use_contract_names(graph):
+    s, repo = graph
+    first = s.store_evidence("API uses v1", repo_id=repo)
+    second = s.store_evidence("API uses v2", repo_id=repo)
+    old = s.store_memory(
+        "API uses v1", layer="semantic", category="fact", repo_id=repo,
+        evidence_ids=[first], auto_link=False,
+    )
+    new = s.revise_memory(old, "API uses v2", evidence_ids=[second])
+    other = s.store_memory("Clients pin the API version", repo_id=repo, auto_link=False)
+    s.add_relationship(new, other, "depends_on")
+    assert s.peek_memory(old)["status"] == "superseded"
+
+    related = s.get_related_memories(new)
+    filtered = s.get_related_memories(new, relationship="depends_on")
+    names = {edge["relationship"] for edge in s.get_all_relationships(repo)}
+
+    assert [(item["id"], item["relationship"]) for item in related] == [(other, "depends_on")]
+    assert [(item["id"], item["relationship"]) for item in filtered] == [(other, "depends_on")]
+    assert {"supersedes", "depends_on"} <= names
+
+
+def test_deleting_a_prohibition_removes_its_attestation(graph, monkeypatch):
+    s, repo = graph
+    private = _authority_key(monkeypatch)
+    content = "Never bypass review"
+    evidence_id = s.store_evidence(content, repo_id=repo)
+    claim = build_prohibition_claim(
+        content=content,
+        repo_id=repo,
+        evidence=[{"id": evidence_id, "content_hash": s.get_evidence(evidence_id)["content_hash"]}],
+    )
+    attestation = sign_prohibition_attestation(
+        claim, key_id="integration", private_key=private, nonce=uuid.uuid4().hex
+    )
+    belief = s.store_memory(
+        content, layer="semantic", category="prohibition", repo_id=repo,
+        evidence_ids=[evidence_id], authority_attestation=attestation, auto_link=False,
+    )
+
+    def remaining():
+        with s.driver.session() as session:
+            return session.run(
+                "MATCH (a:AuthorityAttestation {belief_id: $id}) RETURN count(a) AS c", id=belief
+            ).single()["c"]
+
+    try:
+        assert s.get_authority_attestation(belief)
+        assert remaining() == 1
+        assert s.delete_memory(belief) is True
+        assert remaining() == 0
+        assert s.get_authority_attestation(belief) is None
+    finally:
+        # Attestation nodes carry no repo_id, so the fixture cleanup cannot see them.
+        with s.driver.session() as session:
+            session.run(
+                "MATCH (a:AuthorityAttestation {belief_id: $id}) DETACH DELETE a", id=belief
+            ).consume()
+
+
+def test_stats_count_only_active_memories(graph):
+    s, repo = graph
+    s.store_memory("Kept note", repo_id=repo, auto_link=False)
+    archived = s.store_memory("Archived note", repo_id=repo, auto_link=False)
+    assert s.update_memory(archived, status="archived")
+
+    stats = s.get_stats(repo_id=repo)
+
+    assert stats["total_memories"] == 1
+    assert sum(stats["memories_by_layer"].values()) == 1
+
+
+def test_vector_search_fills_a_starved_scope_with_keyword_matches(graph):
+    """queryNodes ranks the whole index before the repo filter, so nearer nodes
+    elsewhere can push every in-scope node out of the vector page."""
+    original, repo = graph
+
+    def embed(text):
+        return [0.0, 1.0, 0.0] if "retries forever" in text else [1.0, 0.0, 0.0]
+
+    vector = Neo4jStorage(
+        uri=original.uri, user=original.user, password=original.password,
+        embedding_dimension=3, embedding_fn=embed,
+    )
+    try:
+        with vector.driver.session() as session:
+            session.run("CALL db.awaitIndexes(30)").consume()
+        for index in range(60):
+            vector.store_memory(f"routine note {index}", repo_id=repo + "-other", auto_link=False)
+        target = vector.store_memory(
+            "the kafka consumer retries forever", repo_id=repo, auto_link=False
+        )
+        with vector.driver.session() as session:
+            session.run("CALL db.awaitIndexes(30)").consume()
+
+        results = vector.search_memories("kafka", repo_id=repo, limit=5)
+
+        assert [item["id"] for item in results] == [target]
+    finally:
+        vector.close()
+
+
+def test_redacting_update_keeps_existing_quality_flags(graph):
+    s, repo = graph
+    memory_id = s.store_memory(
+        "Deploy notes", repo_id=repo, quality_flags=["needs_review"], auto_link=False
+    )
+    secret = "ghp_" + "a1B2c3D4e5" * 3 + "f6G7h8"
+
+    assert s.update_memory(memory_id, content=f"Deploy with token {secret}")
+
+    stored = s.peek_memory(memory_id)
+    assert secret not in stored["content"]
+    assert "needs_review" in stored["quality_flags"]
+    assert len(stored["quality_flags"]) > 1

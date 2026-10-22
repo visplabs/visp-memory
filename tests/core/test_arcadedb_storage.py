@@ -154,10 +154,15 @@ class FakeArcadeDb:
                 if "RETURN AFTER" in sql:
                     return [record]
             return [] if "RETURN AFTER" in sql else None
-        if sql.startswith("DELETE FROM ") or sql.startswith("DELETE EDGE "):
-            kind = sql.split()[1]
+        if sql.startswith("DELETE EDGE "):
+            # OrientDB syntax: the ArcadeDB SQL parser rejects it, so the fake must too.
+            raise AssertionError(f"ArcadeDB SQL has no DELETE EDGE: {sql}")
+        if sql.startswith("DELETE FROM "):
             type_name = sql.split()[2]
-            store = self.records[type_name] if kind == "FROM" else self.edges[type_name]
+            # As in ArcadeDB, DELETE FROM removes records of any type, edges included.
+            store = (
+                self.edges[type_name] if type_name in self.edge_types else self.records[type_name]
+            )
             field = re.search(r"WHERE (\w+) = \?", sql).group(1)
             if field == "id":
                 store.pop(params[0], None)
@@ -701,7 +706,7 @@ def test_arcadedb_repository_purge_retains_repository_on_authority_cleanup_failu
     original_command = fake_arcadedb.db.command
 
     def fail_authority_edge_delete(language, sql, *params):
-        if sql.startswith("DELETE EDGE BeliefAuthority"):
+        if sql.startswith("DELETE FROM BeliefAuthority"):
             raise RuntimeError("authority edge store unavailable")
         return original_command(language, sql, *params)
 
@@ -1612,6 +1617,123 @@ def test_real_arcadedb_memory_listing_supports_offsets(tmp_path):
     )
 
     assert [item["id"] for item in page] == memory_ids[1:]
+
+
+def _require_native_arcadedb():
+    if sys.platform == "win32":
+        pytest.skip("arcadedb_embedded native smoke is unstable on Windows")
+    try:
+        import arcadedb_embedded  # noqa: F401
+    except ImportError:
+        pytest.skip("arcadedb_embedded is not installed")
+
+
+def _count_native(storage, sql, *params):
+    with storage._database() as db:
+        return len(storage._rows(db.query("sql", sql, *params)))
+
+
+def test_real_arcadedb_reads_evidence_back(tmp_path):
+    """Rows must be converted while the database is open; the engine refuses after."""
+    _require_native_arcadedb()
+    storage = ArcadeDbStorage(tmp_path)
+    evidence_id = storage.store_evidence("Real ArcadeDB evidence", repo_id="repo-real")
+
+    assert storage.get_evidence(evidence_id)["content"] == "Real ArcadeDB evidence"
+    assert [item["id"] for item in storage.list_evidence("repo-real")] == [evidence_id]
+
+
+def test_real_arcadedb_delete_memory_removes_authority_graph_and_source_refs(
+    tmp_path, monkeypatch
+):
+    """The fake accepted OrientDB's DELETE EDGE; the real parser rejects it."""
+    _require_native_arcadedb()
+    private_key = Ed25519PrivateKey.generate()
+    private_raw = private_key.private_bytes(
+        serialization.Encoding.Raw,
+        serialization.PrivateFormat.Raw,
+        serialization.NoEncryption(),
+    )
+    public_raw = private_key.public_key().public_bytes(
+        serialization.Encoding.Raw,
+        serialization.PublicFormat.Raw,
+    )
+    monkeypatch.setenv(
+        PROHIBITION_AUTHORITY_KEYS_ENV,
+        json.dumps({"owner": base64.b64encode(public_raw).decode("ascii")}),
+    )
+    storage = ArcadeDbStorage(tmp_path)
+    content = "Never bypass review"
+    evidence_id = storage.store_evidence(content, repo_id="repo-real")
+    claim = build_prohibition_claim(
+        content=content,
+        repo_id="repo-real",
+        evidence=[
+            {"id": evidence_id, "content_hash": storage.get_evidence(evidence_id)["content_hash"]}
+        ],
+    )
+    attestation = sign_prohibition_attestation(
+        claim,
+        key_id="owner",
+        private_key=base64.b64encode(private_raw).decode("ascii"),
+        nonce="native-nonce",
+    )
+    prohibition = storage.store_memory(
+        content,
+        layer="semantic",
+        category="prohibition",
+        repo_id="repo-real",
+        evidence_ids=[evidence_id],
+        authority_attestation=attestation,
+        auto_link=False,
+    )
+    other = storage.store_memory("other source", repo_id="repo-real", auto_link=False)
+    derived = storage.store_memory(
+        "derived", repo_id="repo-real", source_ids=[prohibition, other], auto_link=False
+    )
+    assert _count_native(
+        storage, "SELECT FROM BeliefAuthority WHERE belief_id = ?", prohibition
+    ) == 1
+
+    assert storage.delete_memory(prohibition) is True
+
+    assert storage.peek_memory(prohibition) is None
+    assert storage.peek_memory(derived)["source_ids"] == [other]
+    assert _count_native(
+        storage, "SELECT FROM BeliefAuthority WHERE belief_id = ?", prohibition
+    ) == 0
+    assert _count_native(
+        storage, "SELECT FROM AuthorityAttestation WHERE belief_id = ?", prohibition
+    ) == 0
+
+
+def test_real_arcadedb_delete_relationship_keeps_both_memories(tmp_path):
+    _require_native_arcadedb()
+    storage = ArcadeDbStorage(tmp_path)
+    source = storage.store_memory("alpha note", repo_id="repo-real", auto_link=False)
+    target = storage.store_memory("beta note", repo_id="repo-real", auto_link=False)
+    relationship_id = storage.add_relationship(source, target, "depends_on")
+    assert [item["id"] for item in storage.get_related_memories(source)] == [target]
+
+    assert storage.delete_relationship(relationship_id) is True
+
+    assert storage.get_related_memories(source) == []
+    assert storage.peek_memory(source) and storage.peek_memory(target)
+
+
+def test_real_arcadedb_purges_a_repository_with_a_dependency(tmp_path):
+    _require_native_arcadedb()
+    storage = ArcadeDbStorage(tmp_path)
+    storage.store_repository({"id": "app", "name": "app"})
+    storage.store_repository({"id": "lib", "name": "lib"})
+    storage.add_repo_dependency("app", "lib", "depends_on")
+    storage.store_memory("app note", repo_id="app", auto_link=False)
+
+    report = storage.purge_repository("app")
+
+    assert report["status"] == "purged", report
+    assert storage.get_repository("app") is None
+    assert storage.get_repository("lib") is not None
 
 
 def test_arcadedb_evidence_retry_ignores_attribution_and_keeps_first_writer(

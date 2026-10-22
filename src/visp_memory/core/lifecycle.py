@@ -256,10 +256,11 @@ class MemoryLifecycleManager:
             return False
         metadata = dict(memory.get("metadata") or {})
         deletion = metadata.pop("deletion", {})
-        previous_status = deletion.get("previous_status", "active")
-        # Restoring undoes the delete, not the review: a quarantined or superseded
-        # row goes back to that state rather than straight into the served set.
-        if previous_status not in {"active", "archived", "quarantined", "superseded"}:
+        previous_status = deletion.get("previous_status")
+        # Restoring undoes the delete, not the review: a quarantined, rejected,
+        # pending, merged or superseded row goes back to that state rather than
+        # straight into the served set.
+        if not isinstance(previous_status, str) or previous_status in {"", "deleted"}:
             previous_status = "active"
         return self.storage.update_memory(memory_id, status=previous_status, metadata=metadata)
 

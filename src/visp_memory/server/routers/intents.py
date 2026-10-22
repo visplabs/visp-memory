@@ -151,7 +151,7 @@ async def update_intent(
         existing_context = intent.get("context") or {}
         preserve_written_by(context, existing_context)
         if not has_admin_privileges(user):
-            for reserved_key in ("author_id", "team_id"):
+            for reserved_key in RESERVED_METADATA_KEYS:
                 if reserved_key in existing_context:
                     context[reserved_key] = existing_context[reserved_key]
                 else:

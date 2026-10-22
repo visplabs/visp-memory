@@ -39,4 +39,4 @@ docs/
 - [Releasing](development/RELEASING.md): maintainer build and publication procedure.
 
 Release notes are kept in the [changelog](../CHANGELOG.md); downloads live on
-[GitHub Releases](https://github.com/djkeshawa/visp-memory/releases).
+[GitHub Releases](https://github.com/visplabs/visp-memory/releases).

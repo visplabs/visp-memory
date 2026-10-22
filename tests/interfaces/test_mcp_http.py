@@ -626,12 +626,16 @@ class TestStatelessTransport:
         assert "could not complete" in payload["message"].lower()
 
     @pytest.mark.asyncio
-    async def test_sse_errors_are_sanitized_and_correlated(self, tmp_path):
+    async def test_sse_errors_are_sanitized_and_correlated(self, tmp_path, monkeypatch):
+        async def explode(*args, **kwargs):
+            raise RuntimeError("database password = super-secret")
+
+        monkeypatch.setattr("visp_memory.interfaces.mcp.handle_tool", explode)
         app = _build_app(tmp_path, json_response=False)
         async with _Client(app) as client:
             response = await client.post(
                 "/mcp",
-                json=_tool_call("memory_record", {"repo_id": "http-repo"}),
+                json=_tool_call("memory_record", {"event": "x", "repo_id": "http-repo"}),
                 headers=HEADERS,
             )
 
@@ -650,7 +654,75 @@ class TestStatelessTransport:
         error = json.loads(error_text)
         assert error["code"] == "request_failed"
         assert error["request_id"] == request_id
-        assert "required property" not in response.text
+        assert "super-secret" not in response.text
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "arguments,named",
+        [
+            ({"query": "auth", "limit": 0, "repo_id": "http-repo"}, "'limit'"),
+            ({"repo_id": "http-repo"}, "'query'"),
+        ],
+    )
+    async def test_schema_refusals_tell_the_client_what_to_fix(
+        self, tmp_path, arguments, named
+    ):
+        # 0.9.0 answered every schema refusal with an opaque request_failed, so a
+        # model could not correct the call; stdio already named the argument.
+        app = _build_app(tmp_path)
+        async with _Client(app) as client:
+            response = await client.post(
+                "/mcp", json=_tool_call("memory_recall", arguments), headers=HEADERS
+            )
+
+        payload = json.loads(_result_text(response))
+        assert payload["code"] == "invalid_arguments"
+        assert payload["request_id"] == response.headers["x-request-id"]
+        assert payload["message"].startswith("Input validation error: ")
+        assert named in payload["message"]
+
+    @pytest.mark.asyncio
+    async def test_a_schema_refusal_does_not_echo_the_refused_value(self, tmp_path):
+        app = _build_app(tmp_path)
+        async with _Client(app) as client:
+            response = await client.post(
+                "/mcp",
+                json=_tool_call(
+                    "memory_recall",
+                    {"query": "auth", "limit": 10**20, "repo_id": "http-repo"},
+                ),
+                headers=HEADERS,
+            )
+
+        payload = json.loads(_result_text(response))
+        assert payload["code"] == "invalid_arguments"
+        assert str(10**20) not in response.text
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "tool,arguments",
+        [
+            ("memory_recall", {"query": "auth", "limit": 500}),
+            ("memory_trace", {"query": "auth", "depth": 5}),
+            ("memory_find_error", {"error_message": "boom", "limit": 60}),
+        ],
+    )
+    async def test_values_the_core_clamps_are_still_accepted(
+        self, tmp_path, monkeypatch, tool, arguments
+    ):
+        # 0.9.0 clamped these in the core; the schema bounds must not turn them
+        # into refusals.
+        monkeypatch.setenv("VISP_MEMORY_MCP_PROFILE", "full")
+        app = _build_app(tmp_path)
+        async with _Client(app) as client:
+            response = await client.post(
+                "/mcp",
+                json=_tool_call(tool, {**arguments, "repo_id": "http-repo"}),
+                headers=HEADERS,
+            )
+
+        result = json.loads(response.text)["result"]
+        assert result.get("isError") is not True, result
 
     @pytest.mark.asyncio
     async def test_model_task_takes_provider_fallback_not_sampling(

@@ -15,6 +15,11 @@ import json
 import logging
 import os
 
+# Upper bound for integer tool arguments. The core clamps limits, depths and budgets to
+# its own ceilings, as 0.9.0 did; this bound only rejects values storage cannot hold
+# (SQLite raises on integers beyond 64 bits), so moderate overshoots still succeed.
+_INT_MAX = 2**31 - 1
+
 try:
     from mcp.types import Tool
 
@@ -363,7 +368,7 @@ def build_tool_definitions() -> list["Tool"]:
                     "limit": {
                         "type": "integer",
                         "minimum": 1,
-                        "maximum": 200,
+                        "maximum": _INT_MAX,
                         "default": 10,
                         "description": "Maximum results to return",
                     },
@@ -461,14 +466,14 @@ def build_tool_definitions() -> list["Tool"]:
                 "properties": {
                     "query": {"type": "string", "description": "Recall query"},
                     "repo_id": {"type": "string", "description": "Repository/project ID"},
-                    "depth": {"type": "integer", "minimum": 0, "maximum": 4, "default": 2},
+                    "depth": {"type": "integer", "minimum": 0, "maximum": _INT_MAX, "default": 2},
                     "token_budget": {
                         "type": "integer",
                         "minimum": 1,
-                        "maximum": 100000,
+                        "maximum": _INT_MAX,
                         "default": 2000,
                     },
-                    "limit": {"type": "integer", "minimum": 1, "maximum": 50, "default": 5},
+                    "limit": {"type": "integer", "minimum": 1, "maximum": _INT_MAX, "default": 5},
                     "environment": RUNTIME_SCOPE_SCHEMA,
                     "task_type": RUNTIME_SCOPE_SCHEMA,
                     "as_of": {"type": "string", "format": "date-time"},
@@ -485,14 +490,14 @@ def build_tool_definitions() -> list["Tool"]:
                     "memory_id": {"type": "string", "description": "Memory ID"},
                     "repo_id": {"type": "string", "description": "Repository/project ID"},
                     "relationship_filter": {"type": "string"},
-                    "depth": {"type": "integer", "minimum": 0, "maximum": 4, "default": 1},
+                    "depth": {"type": "integer", "minimum": 0, "maximum": _INT_MAX, "default": 1},
                     "token_budget": {
                         "type": "integer",
                         "minimum": 1,
-                        "maximum": 100000,
+                        "maximum": _INT_MAX,
                         "default": 2000,
                     },
-                    "limit": {"type": "integer", "minimum": 1, "maximum": 100, "default": 25},
+                    "limit": {"type": "integer", "minimum": 1, "maximum": _INT_MAX, "default": 25},
                     "environment": RUNTIME_SCOPE_SCHEMA,
                     "task_type": RUNTIME_SCOPE_SCHEMA,
                     "as_of": {"type": "string", "format": "date-time"},
@@ -509,11 +514,13 @@ def build_tool_definitions() -> list["Tool"]:
                     "source_id": {"type": "string", "description": "Source memory ID"},
                     "target_id": {"type": "string", "description": "Target memory ID"},
                     "repo_id": {"type": "string", "description": "Repository/project ID"},
-                    "max_hops": {"type": "integer", "minimum": 1, "maximum": 6, "default": 4},
+                    "max_hops": {
+                        "type": "integer", "minimum": 1, "maximum": _INT_MAX, "default": 4
+                    },
                     "token_budget": {
                         "type": "integer",
                         "minimum": 1,
-                        "maximum": 100000,
+                        "maximum": _INT_MAX,
                         "default": 2000,
                     },
                     "environment": RUNTIME_SCOPE_SCHEMA,
@@ -532,14 +539,14 @@ def build_tool_definitions() -> list["Tool"]:
                     "query": {"type": "string", "description": "Recall query"},
                     "memory_id": {"type": "string", "description": "Memory ID"},
                     "repo_id": {"type": "string", "description": "Repository/project ID"},
-                    "depth": {"type": "integer", "minimum": 0, "maximum": 4, "default": 2},
+                    "depth": {"type": "integer", "minimum": 0, "maximum": _INT_MAX, "default": 2},
                     "token_budget": {
                         "type": "integer",
                         "minimum": 1,
-                        "maximum": 100000,
+                        "maximum": _INT_MAX,
                         "default": 2000,
                     },
-                    "limit": {"type": "integer", "minimum": 1, "maximum": 50, "default": 5},
+                    "limit": {"type": "integer", "minimum": 1, "maximum": _INT_MAX, "default": 5},
                     "environment": RUNTIME_SCOPE_SCHEMA,
                     "task_type": RUNTIME_SCOPE_SCHEMA,
                     "as_of": {"type": "string", "format": "date-time"},
@@ -588,7 +595,7 @@ def build_tool_definitions() -> list["Tool"]:
                     "limit": {
                         "type": "integer",
                         "minimum": 1,
-                        "maximum": 50,
+                        "maximum": _INT_MAX,
                         "default": 5,
                         "description": "Maximum similar errors to return",
                     },
@@ -941,6 +948,7 @@ def build_tool_definitions() -> list["Tool"]:
                 "properties": {
                     "workflow_report": _workflow_report_schema(),
                     "intent_id": {"type": "string", "description": "Intent ID to update"},
+                    "repo_id": {"type": "string", "description": "Repository/project ID"},
                     "description": {"type": "string", "description": "Updated description"},
                     "priority": {
                         "type": "integer",
@@ -963,6 +971,7 @@ def build_tool_definitions() -> list["Tool"]:
                 "type": "object",
                 "properties": {
                     "intent_id": {"type": "string", "description": "Intent ID to close"},
+                    "repo_id": {"type": "string", "description": "Repository/project ID"},
                 },
                 "required": ["intent_id"],
             },
@@ -1035,7 +1044,7 @@ def build_tool_definitions() -> list["Tool"]:
                     "memory_id": {"type": "string", "description": "Filter by memory ID"},
                     "repo_id": {"type": "string", "description": "Repository/project ID"},
                     "event_type": {"type": "string", "description": "Filter by event type"},
-                    "limit": {"type": "integer", "minimum": 1, "maximum": 200, "default": 50},
+                    "limit": {"type": "integer", "minimum": 1, "maximum": _INT_MAX, "default": 50},
                 },
             },
         ),

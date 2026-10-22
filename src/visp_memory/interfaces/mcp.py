@@ -165,6 +165,9 @@ def _writer_for_call(session) -> WriterIdentity | None:
 VALID_LAYERS = frozenset({"raw", "episodic", "semantic", "intent"})
 VALID_INTENT_STATUSES = frozenset({"active", "completed", "closed"})
 
+#: Opens every schema refusal; the HTTP transport passes such text through.
+INPUT_VALIDATION_ERROR_PREFIX = "Input validation error: "
+
 
 @dataclass(frozen=True)
 class MCPRequestContext:
@@ -264,8 +267,32 @@ def _input_validation_error(
     try:
         jsonschema.validate(arguments, tool.input_schema)
     except jsonschema.ValidationError as error:
-        return f"Input validation error: {error.message}"
+        return f"{INPUT_VALIDATION_ERROR_PREFIX}{_schema_error_detail(error)}"
     return None
+
+
+def _schema_error_detail(error) -> str:
+    """Name the failing argument and its rule without echoing the value.
+
+    A refused value can be long or sensitive, and the HTTP transport returns this
+    text to the client verbatim as an ``invalid_arguments`` error.
+    """
+    field = ".".join(str(part) for part in error.absolute_path)
+    rule = error.validator_value
+    if not field:
+        # "required" and "additionalProperties" name properties, not values.
+        detail = error.message
+    elif error.validator == "minimum":
+        detail = f"argument {field!r} is less than the minimum of {rule!r}"
+    elif error.validator == "maximum":
+        detail = f"argument {field!r} is greater than the maximum of {rule!r}"
+    elif error.validator == "enum":
+        detail = f"argument {field!r} is not one of {rule!r}"
+    elif error.validator == "type":
+        detail = f"argument {field!r} is not of type {rule!r}"
+    else:
+        detail = f"argument {field!r} does not satisfy {error.validator} {rule!r}"
+    return detail[:200]
 
 
 def _requires_explicit_scope() -> bool:
@@ -1695,8 +1722,10 @@ def _refuse_stdio_foreign_record_ids(args: dict[str, Any], memory: Memory) -> st
     rewrite another project's records (or the quarantine bucket) by ID. The
     scope is the call's ``repo_id`` (which ``_refuse_stdio_repo_override`` has
     already held to the pinned one unless the override is enabled), else the
-    configured repo. An unscoped project has no pin, so nothing is checked; an
-    unknown ID is left to the handler's own not-found answer.
+    configured repo. An unscoped project has no pin, so nothing is checked. An
+    unknown memory ID is left to the handler's own not-found answer; an intent ID
+    must name an intent of the scope, as over HTTP, because client mode can list
+    only its own repository's intents and so cannot tell foreign from unknown.
     """
     if _requires_explicit_scope():
         return None
@@ -1725,12 +1754,14 @@ def _refuse_stdio_foreign_record_ids(args: dict[str, Any], memory: Memory) -> st
                 "of this stdio MCP process."
             )
     if intent_id:
-        intents = memory._storage.get_active_intents(repo_id=None, status="all")
-        intent = next((item for item in intents if item.get("id") == intent_id), None)
-        if intent and intent.get("repo_id") != scope:
+        # Ask the scope for the intent rather than the store for everything:
+        # RemoteStorage answers repo_id=None with its own repository only, so a
+        # store-wide lookup cannot see another project's intent in client mode.
+        in_scope = memory._storage.get_active_intents(repo_id=scope, status="all")
+        if not any(item.get("id") == intent_id for item in in_scope):
             return (
-                f"Refused: intent {intent_id!r} is not in repository {scope!r}, the scope "
-                "of this stdio MCP process."
+                f"Refused: repository {scope!r}, the scope of this stdio MCP process, "
+                f"has no intent {intent_id!r}."
             )
     return None
 
@@ -2045,6 +2076,7 @@ def _handle_maintenance(name: str, args: dict[str, Any], memory: Memory) -> str:
         if not args.get("confirm", False):
             return "Set confirm=true to record outcomes for all active goals."
         recorded = memory.intent.clear_all(
+            repo_id=memory.config.repo_id,
             actor_id=MCP_CLIENT_ACTOR,
             channel=WriteChannel.MCP,
         )

@@ -64,10 +64,11 @@ Check the client's own configuration format when adapting this example.
 A stdio server started in an initialized project is pinned to that project's
 `repo_id`. Its tools and `memory://` resources read and write only that
 repository: a different `repo_id` argument, or an intent or memory ID that
-belongs to another repository, is refused. Set
-`VISP_MEMORY_MCP_ALLOW_REPO_OVERRIDE=true` only when a client should deliberately
-pass another `repo_id`; ID-addressed calls must then name the repository that
-owns the record.
+belongs to another repository, is refused. The exceptions are the store
+maintenance tools `memory_compress` and `memory_decay`, which act on the whole
+local store. Set `VISP_MEMORY_MCP_ALLOW_REPO_OVERRIDE=true` only when a client
+should deliberately pass another `repo_id`; ID-addressed calls must then name the
+repository that owns the record in their `repo_id` argument.
 
 ## The everyday workflow
 

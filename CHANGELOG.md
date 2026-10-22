@@ -3,13 +3,135 @@
 Notable changes to visp-memory. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Releases up to 0.7.10 are
 described only by their
-[GitHub release notes](https://github.com/djkeshawa/visp-memory/releases).
+[GitHub release notes](https://github.com/visplabs/visp-memory/releases).
 
 The release workflow publishes the section matching the tag (or `Unreleased`, if the
 tag has no section yet) as the GitHub release body. See
 [Releasing](docs/development/RELEASING.md#release-notes).
 
 ## [Unreleased]
+
+## [0.10.0] - 2026-10-22
+
+Fixes from a module-by-module audit (#107): about 75 confirmed defects across storage,
+retrieval, the server, MCP, the CLI, capture and the dashboard, several of them
+security or data-loss bugs. The repository now lives at
+[visplabs/visp-memory](https://github.com/visplabs/visp-memory), and the container
+image moves with it. Read **Upgrading** before updating.
+
+### Upgrading
+
+- The container image is published as `ghcr.io/visplabs/visp-memory` from this
+  release on; 0.9.0 and earlier were published as `ghcr.io/djkeshawa/visp-memory`.
+  Update image references when you upgrade.
+- `visp-memory convention -r` now means `--repo`, as on every other write command;
+  `--rationale` no longer has a short flag. Scripts that passed `-r "<why>"` now set
+  the repository instead.
+- Token scopes: `POST /graph-recall/*` needs `memory:read` (it needed
+  `memory:write`), and `POST /ai/ask` needs both `memory:read` and `memory:write`.
+  A token request that matches no scope rule is refused for every method except
+  GET and HEAD.
+- `GET /diagnostics/storage` and `GET /diagnostics/providers` require an
+  administrator or the local owner (the default `visp-memory serve` on loopback);
+  other users get 403. The dashboard's Settings page shows "requires an
+  administrator" for sections a user cannot read.
+- Project-restricted tokens must name one of their projects on the audit-log and
+  embedding-index routes; a call without `repo_id` is refused (404).
+- `visp-memory-mcp-http` binds beyond loopback only when server authentication is
+  enabled. `VISP_MEMORY_MCP_HTTP_TOKEN` never authorized tool calls and no longer
+  unlocks a non-loopback bind.
+- `connect` refuses to keep stored `api_key`/`jwt_token` beside an auto-discovered
+  server URL it withheld them from; pass `--server-url` to choose the server.
+  `connect --migrate-local` reads the store named by `VISP_MEMORY_STORAGE_DATA_DIR`
+  and refuses, leaving the config unchanged, when there is no local store.
+- `visp-memory init` no longer writes secrets from the environment (API keys, JWT
+  secret, Neo4j password, bootstrap admin password) into `visp-memory.yaml`. If an
+  earlier `init` wrote them, remove them from the file and rotate them.
+- Restoring a deleted memory returns it to its earlier quarantined or superseded
+  state instead of making it active.
+- Re-adding an existing relationship (same source, target and type) updates it in
+  place on SQLite instead of creating a duplicate edge. Neo4j now returns
+  relationship names in lowercase, matching SQLite.
+- Conversations captured before this release are captured once more, because their
+  manifest is now keyed by full path rather than file name.
+
+### Changed
+
+- Dashboard dependencies updated, including Next.js 16.4 and Radix UI (#109). The
+  container base image is Python 3.14.8 (#94).
+- Task briefs no longer read slash-separated words (`read/write`, `TCP/IP`, URLs) as
+  file paths. An extension-less two-segment path such as `src/auth` in plain text is
+  no longer inferred either; `src/auth/`, `src/auth/x` and backticked paths are.
+
+### Fixed
+
+- Storage: a new store's first open is atomic, so concurrent opens no longer fail
+  and an interrupted one no longer leaves a store that cannot be opened. Vector
+  writes respect Chroma's batch limit, a failed backfill retries instead of leaving
+  an empty index, and lexical search matches non-ASCII text in any case.
+- ArcadeDB: deleting a relationship, purging a repository and reading evidence failed
+  on the real engine (`DELETE EDGE` is not ArcadeDB SQL, and evidence rows were read
+  after the database closed). Deleting a memory now also removes its authority
+  attestation and drops it from other memories' `source_ids`.
+- Neo4j vector search no longer returns nothing when the nearest memories belong to
+  other projects; ArcadeDB keyword search looks past the 50 most important rows.
+  Both stop serving superseded memories as related, and Neo4j stats count only
+  active memories.
+- A revised signed prohibition survives export and re-import.
+- Retention skips a held or pinned memory instead of refusing to run for the whole
+  project.
+- The intelligence report lists memories joined by a `contradicts` edge, and
+  cross-project context no longer loses warnings behind newer episodes.
+- Compression no longer duplicates principles on every run or stalls after the
+  oldest 500 episodes. Ollama calls honour a timeout.
+- File context matches `./src/x.py` and `src\x.py` to the memory about `src/x.py`,
+  and multi-file context keeps recent changes.
+- The Claude Code PreToolUse hook injects context for absolute paths, which Claude
+  Code always sends. Git hooks install where git runs them (linked worktrees,
+  `core.hooksPath`), rapid commits are no longer dropped, and bootstrap reruns no
+  longer duplicate warnings.
+- `init --data src/x` ignores that path rather than all of `src/`. `audit` covers
+  every row instead of the first 1,000 per layer. `doctor` no longer creates a
+  store. An empty or comment-only config file loads defaults.
+- Graph `path` and `why_relevant` report real hop distances.
+- Dashboard: project IDs containing `/` work on the Review page; failed statistics
+  show an error instead of zeros; "Check for changes" keeps the brief; load errors
+  no longer also show "nothing here" messages; signing out clears local credentials
+  when the server call fails.
+
+### Security
+
+- The dashboard uses Next.js 16.4.2, which fixes critical advisories in 16.0.0–16.4.0
+  (GHSA-2464-fhr4-w9xw, GHSA-673q-mjm6-r5xr: unauthenticated remote code execution;
+  GHSA-p3m5-59mp-jv5r: denial of service). The dashboard is a static export served
+  by the Python server, but the dependency is updated so no release ships it.
+- A request path containing a control character (for example `/memories%0A`) was
+  routed like its clean twin but matched no token-scope rule, so a `project:read`
+  token could write, create teams and bypass the import size limit. Such requests
+  are refused (400).
+- A user without a team could plant intents in another team's view through
+  `context.team_id`; reserved fields are stripped from intent context.
+- Project-restricted administrator tokens could read other projects' audit logs and
+  embedding-index status.
+- A format-2 import could claim the `authored` tier through its tags, and supersede
+  authority was read from the `source` field, so a belief built from weaker sources
+  could retire a stronger one (MG-028). Level-2 compression could turn hypotheses
+  into canonical procedures (MG-048).
+- Conflict detection trusted memory IDs returned by the model, so a memory it never
+  examined could be superseded. `dedup --merge` could delete another project's
+  memory or the active version of a revised belief.
+- A stdio MCP server pinned to one project read and edited other projects' records,
+  including quarantined ones, through unscoped reads and record IDs.
+- Secret redaction missed environment-style names (`AWS_SECRET_ACCESS_KEY=`,
+  `DB_PASSWORD=`, `GITHUB_TOKEN=`) and one pattern was quadratic on long input.
+- Conversation capture sent the embedding API key to the LLM provider. Instruction
+  ingest followed symlinks out of the repository. Recalled text containing the
+  managed-region markers could wedge `CLAUDE.md`/`AGENTS.md` updates and leak into
+  instruction capture.
+- `serve --shared`'s own config was discovered as a project config under `$HOME`,
+  so `connect` could write agent settings into `$HOME`.
+- A deeply nested code-graph projection could crash the process; projections nested
+  more than 64 levels are rejected before parsing.
 
 ## [0.9.0] - 2026-10-10
 
@@ -162,7 +284,7 @@ dashboard dependency updates for published advisories (#83, #84).
 ## [0.8.0] - 2026-10-04
 
 Everything merged since 0.7.10 (#49 to #78). The headline is one local server that
-many projects and agents share; see [Shared server](https://github.com/djkeshawa/visp-memory/blob/develop/docs/guides/SHARED_SERVER.md).
+many projects and agents share; see [Shared server](https://github.com/visplabs/visp-memory/blob/develop/docs/guides/SHARED_SERVER.md).
 
 ### Upgrading
 
@@ -301,7 +423,7 @@ access tokens, or has Codex configured.
   name a repo other than the project's pinned one) and
   `VISP_MEMORY_STORAGE_WRITER_GUARD`.
 - `EpisodicMemory.record(..., status=...)`, keyword-only, default `active`.
-- Documentation: [Shared server](https://github.com/djkeshawa/visp-memory/blob/develop/docs/guides/SHARED_SERVER.md). Feature status: shared
+- Documentation: [Shared server](https://github.com/visplabs/visp-memory/blob/develop/docs/guides/SHARED_SERVER.md). Feature status: shared
   local server and writer guard Beta, `written_by` Experimental.
 
 ### Changed
@@ -395,7 +517,8 @@ access tokens, or has Codex configured.
   `VISP_MEMORY_MCP_ALLOW_REPO_OVERRIDE` is set, and unscoped writes are checked
   before dispatch.
 
-[Unreleased]: https://github.com/djkeshawa/visp-memory/compare/v0.9.0...develop
-[0.9.0]: https://github.com/djkeshawa/visp-memory/compare/v0.8.1...v0.9.0
-[0.8.1]: https://github.com/djkeshawa/visp-memory/compare/v0.8.0...v0.8.1
-[0.8.0]: https://github.com/djkeshawa/visp-memory/compare/v0.7.10...v0.8.0
+[Unreleased]: https://github.com/visplabs/visp-memory/compare/v0.10.0...develop
+[0.10.0]: https://github.com/visplabs/visp-memory/compare/v0.9.0...v0.10.0
+[0.9.0]: https://github.com/visplabs/visp-memory/compare/v0.8.1...v0.9.0
+[0.8.1]: https://github.com/visplabs/visp-memory/compare/v0.8.0...v0.8.1
+[0.8.0]: https://github.com/visplabs/visp-memory/compare/v0.7.10...v0.8.0
