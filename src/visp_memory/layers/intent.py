@@ -307,16 +307,19 @@ class IntentMemory(BaseMemoryLayer):
     def clear_all(
         self,
         *,
+        repo_id: str = None,
         actor_id: str = "library-caller",
         channel: WriteChannel | str = WriteChannel.LIBRARY,
     ) -> int:
         """
         Record completion outcomes for all active intents/goals.
 
+        ``repo_id`` limits this to one repository; ``None`` covers every one.
+
         Returns:
             Number of intents cleared
         """
-        intents = self.get_active()
+        intents = self.get_active(repo_id=repo_id)
         recorded = 0
         for intent in intents:
             if self.complete(

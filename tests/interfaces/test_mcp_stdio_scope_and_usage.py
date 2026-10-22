@@ -158,6 +158,47 @@ async def test_stdio_override_permits_ids_from_the_named_repository(two_repos, m
     assert named.content[0].text == f"Intent updated: {ids['intent']}"
 
 
+@pytest.mark.asyncio
+async def test_stdio_answers_a_foreign_and_an_unknown_intent_alike(two_repos):
+    memory, ids = two_repos
+    server = _server(memory)
+
+    foreign = await call_tool(server, "memory_close_intent", {"intent_id": ids["intent"]})
+    unknown = await call_tool(server, "memory_close_intent", {"intent_id": "no-such-intent"})
+
+    assert foreign.content[0].text == (
+        f"Refused: repository 'repo-a', the scope of this stdio MCP process, "
+        f"has no intent {ids['intent']!r}."
+    )
+    assert unknown.content[0].text == (
+        "Refused: repository 'repo-a', the scope of this stdio MCP process, "
+        "has no intent 'no-such-intent'."
+    )
+
+
+@pytest.mark.asyncio
+async def test_stdio_clear_goals_records_outcomes_only_for_the_pinned_repository(two_repos):
+    memory, ids = two_repos
+
+    result = await call_tool(_server(memory), "memory_clear_goals", {"confirm": True})
+
+    assert result.content[0].text.startswith("Recorded 2 goal outcomes")
+    (foreign,) = memory._storage.get_active_intents(repo_id="repo-b", status="all")
+    assert foreign["id"] == ids["intent"]
+    assert not foreign.get("context", {}).get("outcome_history")
+    own = memory._storage.get_active_intents(repo_id="repo-a", status="all")
+    assert all(intent["context"].get("outcome_history") for intent in own)
+
+
+@pytest.mark.parametrize("tool", ["memory_update_intent", "memory_close_intent"])
+def test_intent_tools_declare_the_repo_id_that_override_mode_requires(tool):
+    from visp_memory.interfaces.mcp_tools import build_tool_definitions
+
+    tools = {item.name: item for item in build_tool_definitions()}
+
+    assert tools[tool].input_schema["properties"]["repo_id"]["type"] == "string"
+
+
 def test_an_unscoped_project_has_no_pin_to_enforce(tmp_path):
     other = _memory(tmp_path, "repo-b")
     intent_id = other.goal("B goal")
@@ -242,7 +283,11 @@ async def test_stdio_prompts_run_on_a_worker_thread(tmp_path, monkeypatch):
 )
 async def test_usage_errors_name_the_problem(tmp_path, monkeypatch, tool, arguments, fragment):
     monkeypatch.setenv("VISP_MEMORY_MCP_PROFILE", "full")
-    result = await call_tool(_server(_memory(tmp_path, "proj")), tool, arguments)
+    memory = _memory(tmp_path, "proj")
+    if "intent_id" in arguments:
+        # An intent of the pinned project, so the scope check lets the call through.
+        arguments = {**arguments, "intent_id": memory.goal("Ship the release")}
+    result = await call_tool(_server(memory), tool, arguments)
 
     payload = json.loads(result.content[0].text)
     assert result.is_error is True
@@ -352,10 +397,10 @@ def test_enforced_authentication_permits_a_network_bind(tmp_path, monkeypatch):
         ("memory_recall", {"query": "auth", "limit": 10**20}),
         ("memory_find_error", {"error_message": "auth", "limit": -1}),
         ("memory_feedback_inspect", {"limit": -1}),
-        ("memory_trace", {"query": "auth", "depth": 10**6}),
+        ("memory_trace", {"query": "auth", "depth": 10**12}),
         ("memory_trace", {"query": "auth", "token_budget": -5}),
         ("memory_neighbors", {"memory_id": "x", "limit": 10**20}),
-        ("memory_path", {"source_id": "a", "target_id": "b", "max_hops": 100}),
+        ("memory_path", {"source_id": "a", "target_id": "b", "max_hops": 10**12}),
         ("memory_why_relevant", {"query": "q", "memory_id": "x", "limit": 0}),
     ],
 )

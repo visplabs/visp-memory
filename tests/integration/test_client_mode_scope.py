@@ -71,3 +71,38 @@ async def test_mcp_tools_succeed_in_client_mode_on_a_shared_server(
     assert expected in text, text
     with pytest.raises(json.JSONDecodeError):
         json.loads(text)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "tool,arguments",
+    [
+        ("memory_update_intent", {"description": "rewritten by proj-a"}),
+        ("memory_close_intent", {}),
+    ],
+)
+async def test_mcp_in_client_mode_refuses_another_projects_intent(
+    client_memory, monkeypatch, tool, arguments
+):
+    # RemoteStorage lists only its own project's intents, so a store-wide lookup
+    # saw the foreign ID as unknown and let the edit through to the server.
+    from tests.mcp_client import call_tool
+    from visp_memory.interfaces import mcp as mcp_module
+
+    monkeypatch.setenv("VISP_MEMORY_MCP_PROFILE", "full")
+    monkeypatch.delenv("VISP_MEMORY_MCP_ALLOW_REPO_OVERRIDE", raising=False)
+    other = client_memory("proj-b")
+    foreign_goal = other.goal("Ship project B")
+    memory = client_memory("proj-a")
+    own_goal = memory.goal("Ship project A")
+    monkeypatch.setattr(mcp_module, "Memory", lambda *a, **k: memory)
+    server = mcp_module.create_mcp_server()
+
+    foreign = await call_tool(server, tool, {"intent_id": foreign_goal, **arguments})
+    own = await call_tool(server, tool, {"intent_id": own_goal, **arguments})
+
+    assert foreign.content[0].text.startswith("Refused:"), foreign.content[0].text
+    (stored,) = other._storage.get_active_intents(repo_id="proj-b", status="all")
+    assert stored["description"] == "Ship project B"
+    assert not stored.get("context", {}).get("outcome_history")
+    assert not own.content[0].text.startswith("Refused:"), own.content[0].text

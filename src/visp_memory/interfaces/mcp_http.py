@@ -52,6 +52,7 @@ from visp_memory.core.attribution import (
     identity_from_headers,
 )
 from visp_memory.interfaces.mcp import (
+    INPUT_VALIDATION_ERROR_PREFIX,
     MCP_AVAILABLE,
     MCPRequestContext,
     bind_mcp_request_context,
@@ -352,6 +353,10 @@ def _sanitize_json_rpc_payload(payload: object, request_id: str) -> object:
                     "An explicit repo_id is required for stateless HTTP requests.",
                     request_id,
                 )
+            elif raw_text.startswith(INPUT_VALIDATION_ERROR_PREFIX):
+                # Schema refusals name the argument and its rule, never the value,
+                # so the model can correct the call.
+                safe = _safe_error_payload("invalid_arguments", raw_text, request_id)
             else:
                 logger.error(
                     "MCP tool error request_id=%s detail=%s", request_id, raw_text
