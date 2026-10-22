@@ -1139,6 +1139,10 @@ class LocalStorage(BaseStorage):
         """
         with self._get_db() as conn:
             self._check_schema_compatibility(conn)
+            # Validation reads every memory and evidence row. A store that was already
+            # at this build's version stays valid, so the re-check under the write
+            # lock confirms its version without repeating that scan.
+            validated = self._stored_schema_version(conn) == STORAGE_SCHEMA_VERSION
 
             # Enable WAL only after compatibility checks: it persists in the
             # database header and legacy stores must remain byte-for-byte unchanged.
@@ -1150,7 +1154,7 @@ class LocalStorage(BaseStorage):
             conn.execute("BEGIN IMMEDIATE")
             # Another process may have created the store (or abandoned a partial
             # one) between the read-only checks and taking the write lock.
-            recovering = self._check_schema_compatibility(conn)
+            recovering = self._check_schema_compatibility(conn, validate=not validated)
             conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS schema_migrations (
@@ -1530,25 +1534,17 @@ class LocalStorage(BaseStorage):
                 time.sleep(0.02)
 
     @classmethod
-    def _check_schema_compatibility(cls, conn: sqlite3.Connection) -> bool:
+    def _check_schema_compatibility(
+        cls, conn: sqlite3.Connection, *, validate: bool = True
+    ) -> bool:
         """Refuse a store this build must not open.
 
         Returns True for the remains of an abandoned first open, which the
-        caller completes inside its schema transaction.
+        caller completes inside its schema transaction. ``validate=False`` skips
+        the full validation of a current-version store already validated.
         """
-        existing_tables = {
-            row["name"]
-            for row in conn.execute(
-                "SELECT name FROM sqlite_master "
-                "WHERE type = 'table' AND name NOT LIKE 'sqlite_%'"
-            ).fetchall()
-        }
-        stored_version = 0
-        if "schema_migrations" in existing_tables:
-            row = conn.execute(
-                "SELECT MAX(version) AS version FROM schema_migrations"
-            ).fetchone()
-            stored_version = int(row["version"] or 0)
+        existing_tables = cls._table_names(conn)
+        stored_version = cls._stored_schema_version(conn, existing_tables)
 
         if stored_version == 0 and existing_tables & _STORAGE_TABLE_NAMES:
             if cls._is_abandoned_first_open(conn, existing_tables):
@@ -1569,9 +1565,27 @@ class LocalStorage(BaseStorage):
                 f"{STORAGE_SCHEMA_VERSION}; create a backup and run "
                 "LocalStorage.migrate_schema(...)"
             )
-        if stored_version == STORAGE_SCHEMA_VERSION:
+        if stored_version == STORAGE_SCHEMA_VERSION and validate:
             cls._validate_v5_schema(conn)
         return False
+
+    @staticmethod
+    def _table_names(conn: sqlite3.Connection) -> set:
+        return {
+            row["name"]
+            for row in conn.execute(
+                "SELECT name FROM sqlite_master "
+                "WHERE type = 'table' AND name NOT LIKE 'sqlite_%'"
+            ).fetchall()
+        }
+
+    @classmethod
+    def _stored_schema_version(cls, conn: sqlite3.Connection, existing_tables=None) -> int:
+        tables = cls._table_names(conn) if existing_tables is None else existing_tables
+        if "schema_migrations" not in tables:
+            return 0
+        row = conn.execute("SELECT MAX(version) AS version FROM schema_migrations").fetchone()
+        return int(row["version"] or 0)
 
     @staticmethod
     def _is_abandoned_first_open(conn: sqlite3.Connection, existing_tables: set) -> bool:

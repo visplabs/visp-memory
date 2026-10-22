@@ -221,7 +221,7 @@ def test_restore_handles_non_deleted_rows_and_invalid_previous_status(tmp_path):
     assert manager.soft_delete(memory_id, actor_id="owner", reason="temporary")
     assert storage.update_memory(
         memory_id,
-        metadata={"deletion": {"previous_status": "merged"}},
+        metadata={"deletion": {"previous_status": "deleted"}},
     )
 
     assert manager.restore(memory_id) is True
