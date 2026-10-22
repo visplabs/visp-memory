@@ -68,6 +68,10 @@ image moves with it. Read **Upgrading** before updating.
   and an interrupted one no longer leaves a store that cannot be opened. Vector
   writes respect Chroma's batch limit, a failed backfill retries instead of leaving
   an empty index, and lexical search matches non-ASCII text in any case.
+- ArcadeDB: deleting a relationship, purging a repository and reading evidence failed
+  on the real engine (`DELETE EDGE` is not ArcadeDB SQL, and evidence rows were read
+  after the database closed). Deleting a memory now also removes its authority
+  attestation and drops it from other memories' `source_ids`.
 - Neo4j vector search no longer returns nothing when the nearest memories belong to
   other projects; ArcadeDB keyword search looks past the 50 most important rows.
   Both stop serving superseded memories as related, and Neo4j stats count only

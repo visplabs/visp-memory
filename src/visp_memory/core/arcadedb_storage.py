@@ -956,9 +956,10 @@ class ArcadeDbStorage(BaseStorage):
         return evidence_id
 
     def get_evidence(self, evidence_id: str) -> Optional[Dict[str, Any]]:
+        # Convert while the database is open: a record row cannot be read after close.
         with self._database() as db:
             rows = self._rows(db.query("sql", "SELECT FROM Evidence WHERE id = ?", evidence_id))
-        return self._evidence_record_to_dict(rows[0]) if rows else None
+            return self._evidence_record_to_dict(rows[0]) if rows else None
 
     def list_evidence(self, repo_id: str, *, limit: int = 10000) -> List[Dict[str, Any]]:
         with self._database() as db:
@@ -971,7 +972,7 @@ class ArcadeDbStorage(BaseStorage):
                     limit,
                 )
             )
-        return [self._evidence_record_to_dict(record) for record in records]
+            return [self._evidence_record_to_dict(record) for record in records]
 
     def update_evidence(self, evidence_id: str, **kwargs) -> bool:
         raise EvidenceImmutableError(f"Evidence {evidence_id!r} is immutable")
@@ -1685,7 +1686,7 @@ class ArcadeDbStorage(BaseStorage):
                 # outlive its belief (SQLite cascades it with the row).
                 db.command(
                     "sql",
-                    f"DELETE EDGE {self.BELIEF_AUTHORITY_EDGE} WHERE belief_id = ?",
+                    f"DELETE FROM {self.BELIEF_AUTHORITY_EDGE} WHERE belief_id = ?",
                     memory_id,
                 )
                 db.command(
@@ -2047,7 +2048,7 @@ class ArcadeDbStorage(BaseStorage):
             with db.transaction():
                 db.command(
                     "sql",
-                    f"DELETE EDGE {self.MEMORY_RELATIONSHIP_EDGE} WHERE id = ?",
+                    f"DELETE FROM {self.MEMORY_RELATIONSHIP_EDGE} WHERE id = ?",
                     relationship_id,
                 )
         return True
@@ -2178,7 +2179,7 @@ class ArcadeDbStorage(BaseStorage):
                         with db.transaction():
                             db.command(
                                 "sql",
-                                f"DELETE EDGE {self.BELIEF_AUTHORITY_EDGE} WHERE id = ?",
+                                f"DELETE FROM {self.BELIEF_AUTHORITY_EDGE} WHERE id = ?",
                                 link_id,
                             )
                 except Exception as exc:
@@ -2295,7 +2296,7 @@ class ArcadeDbStorage(BaseStorage):
                         with db.transaction():
                             db.command(
                                 "sql",
-                                f"DELETE EDGE {self.REPO_DEPENDENCY_EDGE} WHERE id = ?",
+                                f"DELETE FROM {self.REPO_DEPENDENCY_EDGE} WHERE id = ?",
                                 dependency.get("id"),
                             )
                 except Exception as exc:
