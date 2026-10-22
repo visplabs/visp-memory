@@ -96,6 +96,10 @@ image moves with it. Read **Upgrading** before updating.
 
 ### Security
 
+- The dashboard uses Next.js 16.4.2, which fixes critical advisories in 16.0.0–16.4.0
+  (GHSA-2464-fhr4-w9xw, GHSA-673q-mjm6-r5xr: unauthenticated remote code execution;
+  GHSA-p3m5-59mp-jv5r: denial of service). The dashboard is a static export served
+  by the Python server, but the dependency is updated so no release ships it.
 - A request path containing a control character (for example `/memories%0A`) was
   routed like its clean twin but matched no token-scope rule, so a `project:read`
   token could write, create teams and bypass the import size limit. Such requests
