@@ -31,9 +31,10 @@ image moves with it. Read **Upgrading** before updating.
   `memory:write`), and `POST /ai/ask` needs both `memory:read` and `memory:write`.
   A token request that matches no scope rule is refused for every method except
   GET and HEAD.
-- `GET /diagnostics/storage` and `GET /diagnostics/providers` require an owner or
-  administrator. The dashboard's Settings page shows "requires an administrator"
-  for sections a user cannot read.
+- `GET /diagnostics/storage` and `GET /diagnostics/providers` require an
+  administrator or the local owner (the default `visp-memory serve` on loopback);
+  other users get 403. The dashboard's Settings page shows "requires an
+  administrator" for sections a user cannot read.
 - Project-restricted tokens must name one of their projects on the audit-log and
   embedding-index routes; a call without `repo_id` is refused (404).
 - `visp-memory-mcp-http` binds beyond loopback only when server authentication is

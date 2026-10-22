@@ -18,6 +18,7 @@ from visp_memory.core.indexing import (
 from visp_memory.server.auth import UserContext, get_current_user
 from visp_memory.server.authorization import (
     require_admin,
+    require_local_owner_or_admin,
     require_owner_or_admin,
     require_token_project_access,
 )
@@ -50,8 +51,8 @@ async def get_storage_diagnostics(
 ):
     """Return non-secret backend capabilities and schema compatibility."""
     # The token scope table classes /diagnostics/* as admin; hold sessions and
-    # anonymous callers to the same bar.
-    require_owner_or_admin(user)
+    # anonymous callers to the same bar, except the local owner of its own store.
+    require_local_owner_or_admin(user)
     storage = request.app.state.storage
     return StorageDiagnosticsResponse(
         backend=request.app.state.storage_backend,
@@ -238,7 +239,7 @@ async def list_provider_diagnostics(
     request: Request, user: UserContext = Depends(get_current_user)
 ):
     """Return non-secret provider diagnostics for the dashboard and CLI."""
-    require_owner_or_admin(user)
+    require_local_owner_or_admin(user)
     runtime_config = load_config()
     embedding_provider = getattr(request.app.state, "embedding_provider", None)
     runtime_status = getattr(request.app.state, "embedding_runtime_status", None)

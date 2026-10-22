@@ -232,3 +232,47 @@ async def test_backend_diagnostics_refuse_a_non_admin_session(client, path):
 
     assert refused.status_code == 403, refused.text
     assert allowed.status_code == 200, allowed.text
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("path", ["/diagnostics/storage", "/diagnostics/providers"])
+@pytest.mark.parametrize(
+    "caller,expected",
+    [
+        # The default `visp-memory serve`: anonymous, loopback, local-owner mode.
+        # Its dashboard sends no maintenance token, and the Settings page needs these.
+        (UserContext(user_id="anonymous", username="anonymous", is_local_owner=True), 200),
+        (UserContext(user_id="anonymous", username="anonymous"), 403),
+    ],
+)
+async def test_backend_diagnostics_serve_the_local_owner_only(client, path, caller, expected):
+    async def current():
+        return caller
+
+    app.dependency_overrides[get_current_user] = current
+    try:
+        response = await client.get(path)
+    finally:
+        app.dependency_overrides.pop(get_current_user, None)
+
+    assert response.status_code == expected, response.text
+
+
+@pytest.mark.asyncio
+async def test_a_non_admin_cannot_set_reserved_intent_context_keys_by_patch(client):
+    alpha = pat(["intent:read", "intent:write"], team="alpha", repo_ids=())
+    created = await client.post(
+        "/intents", json={"description": "alpha intent", "repo_id": "proj"}, headers=alpha
+    )
+    intent_id = created.json()["id"]
+
+    patched = await client.patch(
+        f"/intents/{intent_id}",
+        json={"context": {"write_channel": "authored", "note": "kept"}},
+        headers=alpha,
+    )
+
+    assert patched.status_code == 200, patched.text
+    context = patched.json()["context"]
+    assert "write_channel" not in context
+    assert context["note"] == "kept"

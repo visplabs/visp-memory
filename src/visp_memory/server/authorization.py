@@ -73,6 +73,21 @@ def require_owner_or_admin(user: UserContext) -> None:
         )
 
 
+def require_local_owner_or_admin(user: UserContext) -> None:
+    """Require an administrator or the local owner reading its own store.
+
+    For non-secret views of the server's own setup. Unlike
+    ``require_owner_or_admin`` it needs no maintenance token, which a browser
+    never sends, so the dashboard of the default ``visp-memory serve`` can read
+    them; other users and anonymous callers of a shared server cannot.
+    """
+    if not (has_admin_privileges(user) or user.is_local_owner or user.owner_maintenance):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Administrator or local owner access is required",
+        )
+
+
 def is_outside_token_projects(repo_id: Optional[str], user: UserContext) -> bool:
     """Whether a token restricted to named projects is asking about another one.
 
